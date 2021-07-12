@@ -7,13 +7,19 @@ import bokeh.plotting
 
 from random import random
 from bokeh.layouts import row, column
-from bokeh.models import ColumnDataSource, CustomJS, LinearAxis
+from bokeh.models import ColumnDataSource, CustomJS, LinearAxis, DataTable, TableColumn, PreText
 from bokeh.models.tools import*
 from bokeh.models.ranges import Range1d
 from bokeh.models import CustomJS
 
 from bokeh.plotting import figure, output_file, show
 
+def prep_chromatogram(df):
+    return(pd.DataFrame({'chromat': np.array([np.sum(val) for val in df['intensity array'].values]), 'num': df['num'].values, 't': df['retentionTime']}))
+
+def prep_ms_data(df):
+    return(pd.DataFrame({'num': [int(n) for n in df['num'].values], 'mass':df['m/z array'].values, 'intensity': df['intensity array'].values}))
+    
 def gcms_plot(df_chromat, df_ms, plot_height=400, plot_width=800):
 
     x = df_chromat['num']
@@ -59,17 +65,35 @@ def gcms_plot(df_chromat, df_ms, plot_height=400, plot_width=800):
     )
     s3 = ColumnDataSource(data=dict(x=df_ms['mass'], y=df_ms['intensity'], i=df_ms['num']))
 
+    TIC_data = dict(
+            TIC=[],
+            start=[],
+            stop=[]
+        )
+    TIC_source = ColumnDataSource(TIC_data)
 
+    TIC_columns = [
+            TableColumn(field="TIC", title="TIC"),
+            TableColumn(field="start", title="start"),
+            TableColumn(field="stop",  title="stop"),
+        ]
+    data_table = DataTable(source=TIC_source, columns=TIC_columns, width=400, height=280, editable=True)
+    
+    table_text = PreText(text='Table of integration results \n to copy will display here', width=500)
+    
     s1.selected.js_on_change(
         "indices",
         CustomJS(
-            args=dict(s1=s1, s2=s2, s3=s3, s5=s5, title=p2.title, min_ind=min_ind),
+            args=dict(s1=s1, s2=s2, s3=s3, s5=s5, TIC_source=TIC_source, title=p2.title, min_ind=min_ind, table_text=table_text),
             code="""
             var inds = cb_obj.indices;
             var start = Math.min(...inds);
             var stop = Math.max(...inds);
             var d5 = s5.data;
             var d3 = s3.data;
+            var d1 = s1.data;
+            var TIC = TIC_source.data;
+            var tab_txt = table_text.text;
             if (start > 0 && start < 10000000) {
                 var x_new = [];
                 var y_new = [];
@@ -83,10 +107,30 @@ def gcms_plot(df_chromat, df_ms, plot_height=400, plot_width=800):
                 }
                 d5['x'] = x_new;
                 d5['y'] = y_new;
-                //title.text=" TIC: ".concat(sum.toString()).concat(" Peak locs: ").concat(start.toString()).concat(", ").concat(stop.toString());
+                title.text=title.text.concat(" TIC: ".concat(sum.toString()).concat(" Peak locs: ").concat(d1['t'][start].toString()).concat(", ").concat(d1['t'][stop].toString()));
+                
+                TIC['TIC'] = TIC['TIC'].concat(sum.toString());
+                TIC['start'] = TIC['start'].concat(d1['t'][start].toString());
+                TIC['stop'] = TIC['stop'].concat(d1['t'][stop].toString());
             }
+            
+            
+            
+            TIC_source.change.emit();
             s5.change.emit();
-            title.change.emit()
+            title.change.emit();
+            
+            //window.alert("Hellow");
+            var tab = "peaks={";
+            for (var i=0; i<TIC['TIC'].length; i++) {
+                //window.alert(i.toString());
+                tab += i.toString() + ": (" + TIC['start'][i].toString() + "," + TIC['stop'][i].toString() + "), ";
+            }
+            tab += "}";
+            //window.alert(tab);
+            table_text.text = tab;
+            table_text.change.emit();
+            
         """,
         ),
     )
@@ -102,7 +146,6 @@ def gcms_plot(df_chromat, df_ms, plot_height=400, plot_width=800):
             var d4 = s4.data;
             var d5 = s5.data;
             var i = Math.round(cb_obj.x);
-
             d4['x'] = [i, i];
             var y_max = Math.max(...d1['y']);
             d4['y'] = [0, y_max*1.01];
@@ -111,14 +154,11 @@ def gcms_plot(df_chromat, df_ms, plot_height=400, plot_width=800):
             
             d2['x'] = d3['x'][i];
             d2['y'] = d3['y'][i];
-
             d5['x'] = d3['x'][i];
             d5['y'] = d3['y'][i];
-
             yr.start=Math.min(...d3['y'][i]);
             yr.end=Math.max(...d3['y'][i])*1.01;
             title.text="Mass spec, retention time: ".concat(d1['t'][i].toString());
-
             yr.change.emit();
             s2.change.emit();
             s4.change.emit();
@@ -127,5 +167,5 @@ def gcms_plot(df_chromat, df_ms, plot_height=400, plot_width=800):
         """)
     )
     #Math.round(cb_obj.x)
-    layout = column(p1, p2)
+    layout = column(p1, p2, data_table, table_text)
     return(layout)
